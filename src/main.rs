@@ -72,6 +72,23 @@ pub struct ScrollParams {
 
 fn default_clicks() -> u32 { 3 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SearchWindowParams {
+    #[schemars(description = "Search query (window name, class, or pattern)")]
+    pub query: String,
+    #[schemars(description = "Search by: 'name', 'class', 'classname', or 'any' (default: 'any')")]
+    #[serde(default = "default_search_type")]
+    pub search_type: String,
+}
+
+fn default_search_type() -> String { "any".to_string() }
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct WindowIdParams {
+    #[schemars(description = "Window ID (from search_window or get_active_window)")]
+    pub window_id: String,
+}
+
 // === Server ===
 
 #[derive(Debug)]
@@ -289,6 +306,135 @@ impl XdotoolServer {
         if output.status.success() {
             Ok(CallToolResult::success(vec![Content::text(
                 "Double-clicked".to_string()
+            )]))
+        } else {
+            Err(McpError::internal_error(
+                format!("xdotool error: {}", String::from_utf8_lossy(&output.stderr)),
+                None
+            ))
+        }
+    }
+
+    #[rmcp::tool(description = "Search for windows by name, class, or pattern. Returns window IDs.")]
+    pub async fn search_window(
+        &self,
+        Parameters(params): Parameters<SearchWindowParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut args = vec!["search"];
+
+        match params.search_type.to_lowercase().as_str() {
+            "name" => args.push("--name"),
+            "class" => args.push("--class"),
+            "classname" => args.push("--classname"),
+            _ => {} // 'any' uses default behavior
+        }
+
+        args.push(&params.query);
+
+        let output = Command::new("xdotool")
+            .args(&args)
+            .output()
+            .map_err(|e| McpError::internal_error(format!("Failed to run xdotool: {}", e), None))?;
+
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let window_ids: Vec<&str> = stdout.lines().collect();
+
+            if window_ids.is_empty() {
+                Ok(CallToolResult::success(vec![Content::text(
+                    format!("No windows found matching '{}'", params.query)
+                )]))
+            } else {
+                Ok(CallToolResult::success(vec![Content::text(
+                    format!("Found {} window(s):\n{}", window_ids.len(), stdout.trim())
+                )]))
+            }
+        } else {
+            // xdotool search returns non-zero if no windows found
+            Ok(CallToolResult::success(vec![Content::text(
+                format!("No windows found matching '{}'", params.query)
+            )]))
+        }
+    }
+
+    #[rmcp::tool(description = "Get the currently focused/active window ID")]
+    pub async fn get_active_window(&self) -> Result<CallToolResult, McpError> {
+        let output = Command::new("xdotool")
+            .args(["getactivewindow"])
+            .output()
+            .map_err(|e| McpError::internal_error(format!("Failed to run xdotool: {}", e), None))?;
+
+        if output.status.success() {
+            let window_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            Ok(CallToolResult::success(vec![Content::text(
+                format!("Active window ID: {}", window_id)
+            )]))
+        } else {
+            Err(McpError::internal_error(
+                format!("xdotool error: {}", String::from_utf8_lossy(&output.stderr)),
+                None
+            ))
+        }
+    }
+
+    #[rmcp::tool(description = "Get window geometry (position and size) for a window ID")]
+    pub async fn get_window_geometry(
+        &self,
+        Parameters(params): Parameters<WindowIdParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let output = Command::new("xdotool")
+            .args(["getwindowgeometry", "--shell", &params.window_id])
+            .output()
+            .map_err(|e| McpError::internal_error(format!("Failed to run xdotool: {}", e), None))?;
+
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let mut x = 0;
+            let mut y = 0;
+            let mut width = 0;
+            let mut height = 0;
+            let mut screen = 0;
+
+            for line in stdout.lines() {
+                if line.starts_with("X=") {
+                    x = line[2..].parse().unwrap_or(0);
+                } else if line.starts_with("Y=") {
+                    y = line[2..].parse().unwrap_or(0);
+                } else if line.starts_with("WIDTH=") {
+                    width = line[6..].parse().unwrap_or(0);
+                } else if line.starts_with("HEIGHT=") {
+                    height = line[7..].parse().unwrap_or(0);
+                } else if line.starts_with("SCREEN=") {
+                    screen = line[7..].parse().unwrap_or(0);
+                }
+            }
+
+            Ok(CallToolResult::success(vec![Content::text(
+                format!("Window {} geometry:\n  Position: ({}, {})\n  Size: {}x{}\n  Screen: {}",
+                    params.window_id, x, y, width, height, screen)
+            )]))
+        } else {
+            Err(McpError::internal_error(
+                format!("xdotool error: {}", String::from_utf8_lossy(&output.stderr)),
+                None
+            ))
+        }
+    }
+
+    #[rmcp::tool(description = "Get the window title/name for a window ID")]
+    pub async fn get_window_name(
+        &self,
+        Parameters(params): Parameters<WindowIdParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let output = Command::new("xdotool")
+            .args(["getwindowname", &params.window_id])
+            .output()
+            .map_err(|e| McpError::internal_error(format!("Failed to run xdotool: {}", e), None))?;
+
+        if output.status.success() {
+            let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            Ok(CallToolResult::success(vec![Content::text(
+                format!("Window {} title: {}", params.window_id, name)
             )]))
         } else {
             Err(McpError::internal_error(
