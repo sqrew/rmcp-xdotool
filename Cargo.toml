@@ -1,0 +1,25 @@
+[package]
+name = "rmcp-xdotool"
+version = "0.1.0"
+edition = "2021"
+authors = ["sqrew"]
+description = "MCP server for xdotool - mouse and keyboard automation"
+license = "MIT"
+repository = "https://github.com/sqrew/rmcp-xdotool"
+keywords = ["mcp", "xdotool", "automation", "mouse", "keyboard"]
+categories = ["development-tools"]
+
+[dependencies]
+rmcp = { version = "0.12", features = ["server", "transport-io"] }
+tokio = { version = "1", features = ["full"] }
+schemars = "1.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
