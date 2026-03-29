@@ -199,14 +199,25 @@ impl XdotoolServer {
         let output = Self::run_xdotool(&args)?;
         if output.status.success() {
             Ok(String::from_utf8_lossy(&output.stdout).lines().map(str::to_string).collect())
-        } else {
+        } else if String::from_utf8_lossy(&output.stderr).trim().is_empty() {
             Ok(vec![])
+        } else {
+            Err(Self::xdotool_error(&output))
         }
     }
 
     fn window_name(&self, window_id: &str) -> Option<String> {
         let output = Self::run_xdotool(&["getwindowname", window_id]).ok()?;
         output.status.success().then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+
+    fn active_window_id(&self) -> Result<String, McpError> {
+        let output = Self::run_xdotool(&["getactivewindow"])?;
+        if output.status.success() {
+            Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        } else {
+            Err(Self::xdotool_error(&output))
+        }
     }
 
     fn window_geometry(&self, window_id: &str) -> Result<(i32, i32, i32, i32, i32), McpError> {
@@ -234,6 +245,10 @@ impl XdotoolServer {
             }
         }
         Ok((x, y, width, height, screen))
+    }
+
+    fn ensure_window_exists(&self, window_id: &str) -> Result<(), McpError> {
+        self.window_geometry(window_id).map(|_| ())
     }
 }
 
@@ -496,6 +511,7 @@ impl XdotoolServer {
         &self,
         Parameters(params): Parameters<SelectWindowParams>,
     ) -> Result<CallToolResult, McpError> {
+        self.ensure_window_exists(&params.window_id)?;
         self.set_selected_window(params.window_id.clone())?;
         Ok(CallToolResult::success(vec![Content::text(format!(
             "Selected window: {}",
@@ -512,6 +528,7 @@ impl XdotoolServer {
         let window_id = window_ids.get(params.index).cloned().ok_or_else(|| {
             McpError::internal_error(format!("No window found matching '{}'", params.query), None)
         })?;
+        self.ensure_window_exists(&window_id)?;
         self.set_selected_window(window_id.clone())?;
         let name = self.window_name(&window_id).unwrap_or_else(|| "<unknown>".to_string());
         Ok(CallToolResult::success(vec![Content::text(format!(
@@ -522,24 +539,13 @@ impl XdotoolServer {
 
     #[rmcp::tool(description = "Save the current active window as the selected window")]
     pub async fn select_active_window(&self) -> Result<CallToolResult, McpError> {
-        let output = Command::new("xdotool")
-            .args(["getactivewindow"])
-            .output()
-            .map_err(|e| McpError::internal_error(format!("Failed to run xdotool: {}", e), None))?;
-
-        if output.status.success() {
-            let window_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            self.set_selected_window(window_id.clone())?;
-            Ok(CallToolResult::success(vec![Content::text(format!(
-                "Selected active window: {}",
-                window_id
-            ))]))
-        } else {
-            Err(McpError::internal_error(
-                format!("xdotool error: {}", String::from_utf8_lossy(&output.stderr)),
-                None
-            ))
-        }
+        let window_id = self.active_window_id()?;
+        self.ensure_window_exists(&window_id)?;
+        self.set_selected_window(window_id.clone())?;
+        Ok(CallToolResult::success(vec![Content::text(format!(
+            "Selected active window: {}",
+            window_id
+        ))]))
     }
 
     #[rmcp::tool(description = "Show the selected window, if one is set")]
@@ -621,22 +627,10 @@ impl XdotoolServer {
 
     #[rmcp::tool(description = "Get the currently focused/active window ID")]
     pub async fn get_active_window(&self) -> Result<CallToolResult, McpError> {
-        let output = Command::new("xdotool")
-            .args(["getactivewindow"])
-            .output()
-            .map_err(|e| McpError::internal_error(format!("Failed to run xdotool: {}", e), None))?;
-
-        if output.status.success() {
-            let window_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            Ok(CallToolResult::success(vec![Content::text(
-                format!("Active window ID: {}", window_id)
-            )]))
-        } else {
-            Err(McpError::internal_error(
-                format!("xdotool error: {}", String::from_utf8_lossy(&output.stderr)),
-                None
-            ))
-        }
+        let window_id = self.active_window_id()?;
+        Ok(CallToolResult::success(vec![Content::text(
+            format!("Active window ID: {}", window_id)
+        )]))
     }
 
     #[rmcp::tool(description = "Get window geometry (position and size) for a window ID")]
