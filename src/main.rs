@@ -11,7 +11,7 @@ use rmcp::{
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
-use std::process::Command;
+use std::{process::Command, sync::Mutex};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 // === Parameter Types ===
@@ -51,6 +51,9 @@ pub struct TypeTextParams {
     #[schemars(description = "Delay between keystrokes in milliseconds. Default: 12")]
     #[serde(default = "default_delay")]
     pub delay: u32,
+    #[schemars(description = "Optional window ID. Defaults to the selected window when set.")]
+    #[serde(default)]
+    pub window_id: Option<String>,
 }
 
 fn default_delay() -> u32 { 12 }
@@ -59,6 +62,9 @@ fn default_delay() -> u32 { 12 }
 pub struct KeyPressParams {
     #[schemars(description = "Key(s) to press. Examples: Return, Escape, ctrl+c, alt+Tab, super+1")]
     pub key: String,
+    #[schemars(description = "Optional window ID. Defaults to the selected window when set.")]
+    #[serde(default)]
+    pub window_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -85,7 +91,14 @@ fn default_search_type() -> String { "any".to_string() }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct WindowIdParams {
-    #[schemars(description = "Window ID (from search_window or get_active_window)")]
+    #[schemars(description = "Optional window ID. Defaults to the selected window when set.")]
+    #[serde(default)]
+    pub window_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SelectWindowParams {
+    #[schemars(description = "Window ID to save as the selected window")]
     pub window_id: String,
 }
 
@@ -94,6 +107,7 @@ pub struct WindowIdParams {
 #[derive(Debug)]
 pub struct XdotoolServer {
     pub tool_router: ToolRouter<Self>,
+    pub selected_window: Mutex<Option<String>>,
 }
 
 impl Default for XdotoolServer {
@@ -106,6 +120,7 @@ impl XdotoolServer {
     pub fn new() -> Self {
         Self {
             tool_router: Self::tool_router(),
+            selected_window: Mutex::new(None),
         }
     }
 
@@ -115,6 +130,34 @@ impl XdotoolServer {
             2 => "middle",
             3 => "right",
             _ => "unknown"
+        }
+    }
+
+    fn selected_window(&self) -> Result<Option<String>, McpError> {
+        self.selected_window
+            .lock()
+            .map(|guard| guard.clone())
+            .map_err(|_| McpError::internal_error("Failed to read selected window", None))
+    }
+
+    fn set_selected_window(&self, window_id: String) -> Result<(), McpError> {
+        *self.selected_window
+            .lock()
+            .map_err(|_| McpError::internal_error("Failed to update selected window", None))? = Some(window_id);
+        Ok(())
+    }
+
+    fn clear_selected_window_state(&self) -> Result<(), McpError> {
+        *self.selected_window
+            .lock()
+            .map_err(|_| McpError::internal_error("Failed to clear selected window", None))? = None;
+        Ok(())
+    }
+
+    fn resolve_window_id(&self, window_id: Option<&str>) -> Result<Option<String>, McpError> {
+        match window_id.filter(|id| !id.trim().is_empty()) {
+            Some(window_id) => Ok(Some(window_id.to_string())),
+            None => self.selected_window(),
         }
     }
 }
@@ -195,14 +238,24 @@ impl XdotoolServer {
         &self,
         Parameters(params): Parameters<TypeTextParams>,
     ) -> Result<CallToolResult, McpError> {
-        let output = Command::new("xdotool")
-            .args(["type", "--delay", &params.delay.to_string(), &params.text])
+        let delay = params.delay.to_string();
+        let selected_window = self.resolve_window_id(params.window_id.as_deref())?;
+        let mut command = Command::new("xdotool");
+        command.arg("type");
+        if let Some(window_id) = selected_window.as_deref() {
+            command.args(["--window", window_id]);
+        }
+        let output = command
+            .args(["--delay", &delay, &params.text])
             .output()
             .map_err(|e| McpError::internal_error(format!("Failed to run xdotool: {}", e), None))?;
 
         if output.status.success() {
             Ok(CallToolResult::success(vec![Content::text(
-                format!("Typed: \"{}\"", params.text)
+                match selected_window {
+                    Some(window_id) => format!("Typed in window {}: \"{}\"", window_id, params.text),
+                    None => format!("Typed: \"{}\"", params.text),
+                }
             )]))
         } else {
             Err(McpError::internal_error(
@@ -217,14 +270,23 @@ impl XdotoolServer {
         &self,
         Parameters(params): Parameters<KeyPressParams>,
     ) -> Result<CallToolResult, McpError> {
-        let output = Command::new("xdotool")
-            .args(["key", &params.key])
+        let selected_window = self.resolve_window_id(params.window_id.as_deref())?;
+        let mut command = Command::new("xdotool");
+        command.arg("key");
+        if let Some(window_id) = selected_window.as_deref() {
+            command.args(["--window", window_id]);
+        }
+        let output = command
+            .arg(&params.key)
             .output()
             .map_err(|e| McpError::internal_error(format!("Failed to run xdotool: {}", e), None))?;
 
         if output.status.success() {
             Ok(CallToolResult::success(vec![Content::text(
-                format!("Pressed key: {}", params.key)
+                match selected_window {
+                    Some(window_id) => format!("Pressed key in window {}: {}", window_id, params.key),
+                    None => format!("Pressed key: {}", params.key),
+                }
             )]))
         } else {
             Err(McpError::internal_error(
@@ -357,6 +419,58 @@ impl XdotoolServer {
         }
     }
 
+    #[rmcp::tool(description = "Save a window ID as the selected window for repeated tool calls")]
+    pub async fn select_window(
+        &self,
+        Parameters(params): Parameters<SelectWindowParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.set_selected_window(params.window_id.clone())?;
+        Ok(CallToolResult::success(vec![Content::text(format!(
+            "Selected window: {}",
+            params.window_id
+        ))]))
+    }
+
+    #[rmcp::tool(description = "Save the current active window as the selected window")]
+    pub async fn select_active_window(&self) -> Result<CallToolResult, McpError> {
+        let output = Command::new("xdotool")
+            .args(["getactivewindow"])
+            .output()
+            .map_err(|e| McpError::internal_error(format!("Failed to run xdotool: {}", e), None))?;
+
+        if output.status.success() {
+            let window_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            self.set_selected_window(window_id.clone())?;
+            Ok(CallToolResult::success(vec![Content::text(format!(
+                "Selected active window: {}",
+                window_id
+            ))]))
+        } else {
+            Err(McpError::internal_error(
+                format!("xdotool error: {}", String::from_utf8_lossy(&output.stderr)),
+                None
+            ))
+        }
+    }
+
+    #[rmcp::tool(description = "Show the selected window, if one is set")]
+    pub async fn get_selected_window(&self) -> Result<CallToolResult, McpError> {
+        Ok(CallToolResult::success(vec![Content::text(
+            match self.selected_window()? {
+                Some(window_id) => format!("Selected window: {}", window_id),
+                None => "No window selected".to_string(),
+            }
+        )]))
+    }
+
+    #[rmcp::tool(description = "Clear the selected window")]
+    pub async fn clear_selected_window(&self) -> Result<CallToolResult, McpError> {
+        self.clear_selected_window_state()?;
+        Ok(CallToolResult::success(vec![Content::text(
+            "Cleared selected window".to_string()
+        )]))
+    }
+
     #[rmcp::tool(description = "Get the currently focused/active window ID")]
     pub async fn get_active_window(&self) -> Result<CallToolResult, McpError> {
         let output = Command::new("xdotool")
@@ -382,8 +496,11 @@ impl XdotoolServer {
         &self,
         Parameters(params): Parameters<WindowIdParams>,
     ) -> Result<CallToolResult, McpError> {
+        let window_id = self
+            .resolve_window_id(params.window_id.as_deref())?
+            .ok_or_else(|| McpError::internal_error("No window selected. Pass a window_id or use select_window/select_active_window first.", None))?;
         let output = Command::new("xdotool")
-            .args(["getwindowgeometry", "--shell", &params.window_id])
+            .args(["getwindowgeometry", "--shell", &window_id])
             .output()
             .map_err(|e| McpError::internal_error(format!("Failed to run xdotool: {}", e), None))?;
 
@@ -411,7 +528,7 @@ impl XdotoolServer {
 
             Ok(CallToolResult::success(vec![Content::text(
                 format!("Window {} geometry:\n  Position: ({}, {})\n  Size: {}x{}\n  Screen: {}",
-                    params.window_id, x, y, width, height, screen)
+                    window_id, x, y, width, height, screen)
             )]))
         } else {
             Err(McpError::internal_error(
@@ -426,15 +543,18 @@ impl XdotoolServer {
         &self,
         Parameters(params): Parameters<WindowIdParams>,
     ) -> Result<CallToolResult, McpError> {
+        let window_id = self
+            .resolve_window_id(params.window_id.as_deref())?
+            .ok_or_else(|| McpError::internal_error("No window selected. Pass a window_id or use select_window/select_active_window first.", None))?;
         let output = Command::new("xdotool")
-            .args(["getwindowname", &params.window_id])
+            .args(["getwindowname", &window_id])
             .output()
             .map_err(|e| McpError::internal_error(format!("Failed to run xdotool: {}", e), None))?;
 
         if output.status.success() {
             let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
             Ok(CallToolResult::success(vec![Content::text(
-                format!("Window {} title: {}", params.window_id, name)
+                format!("Window {} title: {}", window_id, name)
             )]))
         } else {
             Err(McpError::internal_error(

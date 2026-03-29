@@ -32,6 +32,10 @@ cargo build --release
 | `scroll` | Scroll up/down/left/right |
 | `get_mouse_position` | Get current cursor position |
 | `double_click` | Double-click at current position |
+| `select_window` | Save a selected window ID |
+| `select_active_window` | Save the active window |
+| `get_selected_window` | Show the selected window |
+| `clear_selected_window` | Clear the selected window |
 
 ## Claude Code Configuration
 
@@ -58,6 +62,7 @@ Claude, click the button at position (800, 450)
 Claude, type "hello world" into the search box
 Claude, press ctrl+s to save
 Claude, scroll down 5 clicks
+Claude, select the active window and keep typing there
 ```
 
 ## Warning
