@@ -11,7 +11,7 @@ use rmcp::{
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
-use std::process::Command;
+use std::{env, process::{Command, Output}};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 // === Parameter Types ===
@@ -117,6 +117,27 @@ impl XdotoolServer {
             _ => "unknown"
         }
     }
+
+    fn x11_hint() -> String {
+        let display = env::var("DISPLAY").unwrap_or_else(|_| "<unset>".into());
+        let xauthority = env::var("XAUTHORITY").unwrap_or_else(|_| "<unset>".into());
+        format!(
+            "X11 env: DISPLAY={}, XAUTHORITY={}. rmcp-xdotool needs a live X11 session.",
+            display, xauthority
+        )
+    }
+
+    fn run_xdotool(args: &[&str]) -> Result<Output, McpError> {
+        Command::new("xdotool").args(args).output().map_err(|e| {
+            McpError::internal_error(format!("Failed to run xdotool: {}. {}", e, Self::x11_hint()), None)
+        })
+    }
+
+    fn xdotool_error(output: &Output) -> McpError {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let detail = if stderr.is_empty() { "unknown error" } else { &stderr };
+        McpError::internal_error(format!("xdotool error: {}. {}", detail, Self::x11_hint()), None)
+    }
 }
 
 #[rmcp::tool_router]
@@ -126,20 +147,16 @@ impl XdotoolServer {
         &self,
         Parameters(params): Parameters<MoveMouseParams>,
     ) -> Result<CallToolResult, McpError> {
-        let output = Command::new("xdotool")
-            .args(["mousemove", &params.x.to_string(), &params.y.to_string()])
-            .output()
-            .map_err(|e| McpError::internal_error(format!("Failed to run xdotool: {}", e), None))?;
+        let x = params.x.to_string();
+        let y = params.y.to_string();
+        let output = Self::run_xdotool(&["mousemove", &x, &y])?;
 
         if output.status.success() {
             Ok(CallToolResult::success(vec![Content::text(
                 format!("Mouse moved to ({}, {})", params.x, params.y)
             )]))
         } else {
-            Err(McpError::internal_error(
-                format!("xdotool error: {}", String::from_utf8_lossy(&output.stderr)),
-                None
-            ))
+            Err(Self::xdotool_error(&output))
         }
     }
 
@@ -148,20 +165,15 @@ impl XdotoolServer {
         &self,
         Parameters(params): Parameters<ClickParams>,
     ) -> Result<CallToolResult, McpError> {
-        let output = Command::new("xdotool")
-            .args(["click", &params.button.to_string()])
-            .output()
-            .map_err(|e| McpError::internal_error(format!("Failed to run xdotool: {}", e), None))?;
+        let button = params.button.to_string();
+        let output = Self::run_xdotool(&["click", &button])?;
 
         if output.status.success() {
             Ok(CallToolResult::success(vec![Content::text(
                 format!("Clicked {} mouse button", Self::button_name(params.button))
             )]))
         } else {
-            Err(McpError::internal_error(
-                format!("xdotool error: {}", String::from_utf8_lossy(&output.stderr)),
-                None
-            ))
+            Err(Self::xdotool_error(&output))
         }
     }
 
@@ -170,23 +182,17 @@ impl XdotoolServer {
         &self,
         Parameters(params): Parameters<ClickAtParams>,
     ) -> Result<CallToolResult, McpError> {
-        let output = Command::new("xdotool")
-            .args([
-                "mousemove", &params.x.to_string(), &params.y.to_string(),
-                "click", &params.button.to_string()
-            ])
-            .output()
-            .map_err(|e| McpError::internal_error(format!("Failed to run xdotool: {}", e), None))?;
+        let x = params.x.to_string();
+        let y = params.y.to_string();
+        let button = params.button.to_string();
+        let output = Self::run_xdotool(&["mousemove", &x, &y, "click", &button])?;
 
         if output.status.success() {
             Ok(CallToolResult::success(vec![Content::text(
                 format!("Clicked {} at ({}, {})", Self::button_name(params.button), params.x, params.y)
             )]))
         } else {
-            Err(McpError::internal_error(
-                format!("xdotool error: {}", String::from_utf8_lossy(&output.stderr)),
-                None
-            ))
+            Err(Self::xdotool_error(&output))
         }
     }
 
@@ -195,20 +201,15 @@ impl XdotoolServer {
         &self,
         Parameters(params): Parameters<TypeTextParams>,
     ) -> Result<CallToolResult, McpError> {
-        let output = Command::new("xdotool")
-            .args(["type", "--delay", &params.delay.to_string(), &params.text])
-            .output()
-            .map_err(|e| McpError::internal_error(format!("Failed to run xdotool: {}", e), None))?;
+        let delay = params.delay.to_string();
+        let output = Self::run_xdotool(&["type", "--delay", &delay, &params.text])?;
 
         if output.status.success() {
             Ok(CallToolResult::success(vec![Content::text(
                 format!("Typed: \"{}\"", params.text)
             )]))
         } else {
-            Err(McpError::internal_error(
-                format!("xdotool error: {}", String::from_utf8_lossy(&output.stderr)),
-                None
-            ))
+            Err(Self::xdotool_error(&output))
         }
     }
 
@@ -217,20 +218,14 @@ impl XdotoolServer {
         &self,
         Parameters(params): Parameters<KeyPressParams>,
     ) -> Result<CallToolResult, McpError> {
-        let output = Command::new("xdotool")
-            .args(["key", &params.key])
-            .output()
-            .map_err(|e| McpError::internal_error(format!("Failed to run xdotool: {}", e), None))?;
+        let output = Self::run_xdotool(&["key", &params.key])?;
 
         if output.status.success() {
             Ok(CallToolResult::success(vec![Content::text(
                 format!("Pressed key: {}", params.key)
             )]))
         } else {
-            Err(McpError::internal_error(
-                format!("xdotool error: {}", String::from_utf8_lossy(&output.stderr)),
-                None
-            ))
+            Err(Self::xdotool_error(&output))
         }
     }
 
@@ -250,29 +245,21 @@ impl XdotoolServer {
             ))
         };
 
-        let output = Command::new("xdotool")
-            .args(["click", "--repeat", &params.clicks.to_string(), button])
-            .output()
-            .map_err(|e| McpError::internal_error(format!("Failed to run xdotool: {}", e), None))?;
+        let clicks = params.clicks.to_string();
+        let output = Self::run_xdotool(&["click", "--repeat", &clicks, button])?;
 
         if output.status.success() {
             Ok(CallToolResult::success(vec![Content::text(
                 format!("Scrolled {} {} clicks", params.direction, params.clicks)
             )]))
         } else {
-            Err(McpError::internal_error(
-                format!("xdotool error: {}", String::from_utf8_lossy(&output.stderr)),
-                None
-            ))
+            Err(Self::xdotool_error(&output))
         }
     }
 
     #[rmcp::tool(description = "Get current mouse cursor position")]
     pub async fn get_mouse_position(&self) -> Result<CallToolResult, McpError> {
-        let output = Command::new("xdotool")
-            .args(["getmouselocation", "--shell"])
-            .output()
-            .map_err(|e| McpError::internal_error(format!("Failed to run xdotool: {}", e), None))?;
+        let output = Self::run_xdotool(&["getmouselocation", "--shell"])?;
 
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -289,30 +276,45 @@ impl XdotoolServer {
                 format!("Mouse position: ({}, {})", x, y)
             )]))
         } else {
-            Err(McpError::internal_error(
-                format!("xdotool error: {}", String::from_utf8_lossy(&output.stderr)),
-                None
-            ))
+            Err(Self::xdotool_error(&output))
         }
     }
 
     #[rmcp::tool(description = "Double-click at current mouse position")]
     pub async fn double_click(&self) -> Result<CallToolResult, McpError> {
-        let output = Command::new("xdotool")
-            .args(["click", "--repeat", "2", "1"])
-            .output()
-            .map_err(|e| McpError::internal_error(format!("Failed to run xdotool: {}", e), None))?;
+        let output = Self::run_xdotool(&["click", "--repeat", "2", "1"])?;
 
         if output.status.success() {
             Ok(CallToolResult::success(vec![Content::text(
                 "Double-clicked".to_string()
             )]))
         } else {
-            Err(McpError::internal_error(
-                format!("xdotool error: {}", String::from_utf8_lossy(&output.stderr)),
-                None
-            ))
+            Err(Self::xdotool_error(&output))
         }
+    }
+
+    #[rmcp::tool(description = "Show basic runtime diagnostics for xdotool and the current X11 environment")]
+    pub async fn diagnostics(&self) -> Result<CallToolResult, McpError> {
+        let xdotool_path = Command::new("sh")
+            .args(["-c", "command -v xdotool || true"])
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "<not found>".into());
+        let display = env::var("DISPLAY").unwrap_or_else(|_| "<unset>".into());
+        let xauthority = env::var("XAUTHORITY").unwrap_or_else(|_| "<unset>".into());
+        let probe = Self::run_xdotool(&["getmouselocation"]);
+        let status = match probe {
+            Ok(output) if output.status.success() => "ok".to_string(),
+            Ok(output) => format!("error: {}", String::from_utf8_lossy(&output.stderr).trim()),
+            Err(err) => err.to_string(),
+        };
+
+        Ok(CallToolResult::success(vec![Content::text(format!(
+            "xdotool: {}\nDISPLAY: {}\nXAUTHORITY: {}\nprobe: {}",
+            xdotool_path, display, xauthority, status
+        ))]))
     }
 
     #[rmcp::tool(description = "Search for windows by name, class, or pattern. Returns window IDs.")]
@@ -331,10 +333,7 @@ impl XdotoolServer {
 
         args.push(&params.query);
 
-        let output = Command::new("xdotool")
-            .args(&args)
-            .output()
-            .map_err(|e| McpError::internal_error(format!("Failed to run xdotool: {}", e), None))?;
+        let output = Self::run_xdotool(&args)?;
 
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -359,10 +358,7 @@ impl XdotoolServer {
 
     #[rmcp::tool(description = "Get the currently focused/active window ID")]
     pub async fn get_active_window(&self) -> Result<CallToolResult, McpError> {
-        let output = Command::new("xdotool")
-            .args(["getactivewindow"])
-            .output()
-            .map_err(|e| McpError::internal_error(format!("Failed to run xdotool: {}", e), None))?;
+        let output = Self::run_xdotool(&["getactivewindow"])?;
 
         if output.status.success() {
             let window_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -370,10 +366,7 @@ impl XdotoolServer {
                 format!("Active window ID: {}", window_id)
             )]))
         } else {
-            Err(McpError::internal_error(
-                format!("xdotool error: {}", String::from_utf8_lossy(&output.stderr)),
-                None
-            ))
+            Err(Self::xdotool_error(&output))
         }
     }
 
@@ -382,10 +375,7 @@ impl XdotoolServer {
         &self,
         Parameters(params): Parameters<WindowIdParams>,
     ) -> Result<CallToolResult, McpError> {
-        let output = Command::new("xdotool")
-            .args(["getwindowgeometry", "--shell", &params.window_id])
-            .output()
-            .map_err(|e| McpError::internal_error(format!("Failed to run xdotool: {}", e), None))?;
+        let output = Self::run_xdotool(&["getwindowgeometry", "--shell", &params.window_id])?;
 
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -414,10 +404,7 @@ impl XdotoolServer {
                     params.window_id, x, y, width, height, screen)
             )]))
         } else {
-            Err(McpError::internal_error(
-                format!("xdotool error: {}", String::from_utf8_lossy(&output.stderr)),
-                None
-            ))
+            Err(Self::xdotool_error(&output))
         }
     }
 
@@ -426,10 +413,7 @@ impl XdotoolServer {
         &self,
         Parameters(params): Parameters<WindowIdParams>,
     ) -> Result<CallToolResult, McpError> {
-        let output = Command::new("xdotool")
-            .args(["getwindowname", &params.window_id])
-            .output()
-            .map_err(|e| McpError::internal_error(format!("Failed to run xdotool: {}", e), None))?;
+        let output = Self::run_xdotool(&["getwindowname", &params.window_id])?;
 
         if output.status.success() {
             let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -437,10 +421,7 @@ impl XdotoolServer {
                 format!("Window {} title: {}", params.window_id, name)
             )]))
         } else {
-            Err(McpError::internal_error(
-                format!("xdotool error: {}", String::from_utf8_lossy(&output.stderr)),
-                None
-            ))
+            Err(Self::xdotool_error(&output))
         }
     }
 }
@@ -467,6 +448,7 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     tracing::info!("Starting rmcp-xdotool server");
+    tracing::info!("{}", XdotoolServer::x11_hint());
 
     let server = XdotoolServer::new();
     let service = server.serve(rmcp::transport::stdio()).await?;
