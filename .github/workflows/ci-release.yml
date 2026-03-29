@@ -18,6 +18,10 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y xdotool
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Validate debug build
+        run: cargo check --locked
+      - name: Validate tests
+        run: cargo test --locked
       - name: Build release binary
         run: cargo build --release --locked
       - name: Package release artifact
