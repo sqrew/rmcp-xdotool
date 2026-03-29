@@ -32,6 +32,7 @@ cargo build --release
 | `scroll` | Scroll up/down/left/right |
 | `get_mouse_position` | Get current cursor position |
 | `double_click` | Double-click at current position |
+| `diagnostics` | Show basic xdotool and X11 runtime diagnostics |
 
 ## Claude Code Configuration
 
@@ -63,6 +64,13 @@ Claude, scroll down 5 clicks
 ## Warning
 
 This gives Claude full control of your mouse and keyboard. Use responsibly. Or don't. You're a pioneer.
+
+## Troubleshooting
+
+If commands fail, run `diagnostics`.
+
+Common problem:
+- `DISPLAY` or `XAUTHORITY` is missing, so `xdotool` cannot talk to a live X11 session
 
 ## Related Projects
 
