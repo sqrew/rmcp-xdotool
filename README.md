@@ -5,14 +5,16 @@ MCP server for mouse and keyboard automation via xdotool. Gives Claude (or any M
 ## Installation
 
 ```bash
-cargo install rmcp-xdotool
+cargo install --locked rmcp-xdotool
 ```
+
+Or download the latest Linux binary from [GitHub Releases](https://github.com/sqrew/rmcp-xdotool/releases).
 
 Or build from source:
 ```bash
 git clone https://github.com/sqrew/rmcp-xdotool
 cd rmcp-xdotool
-cargo build --release
+cargo build --release --locked
 ```
 
 ## Requirements
@@ -49,6 +51,14 @@ Add to your `~/.claude.json`:
   }
 }
 ```
+
+## GitHub Releases
+
+Pushing a tag like `v0.2.1` triggers GitHub Actions to:
+
+- build the release binary on Ubuntu
+- upload the binary as a workflow artifact
+- attach `rmcp-xdotool-linux-x86_64.tar.gz` to the GitHub release for that tag
 
 ## Usage Examples
 

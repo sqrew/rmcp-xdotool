@@ -10,7 +10,7 @@ keywords = ["mcp", "xdotool", "automation", "mouse", "keyboard"]
 categories = ["development-tools"]
 
 [dependencies]
-rmcp = { version = "0.12", features = ["server", "transport-io"] }
+rmcp = { version = "0.11", features = ["server", "transport-io"] }
 tokio = { version = "1", features = ["full"] }
 schemars = "1.0"
 serde = { version = "1", features = ["derive"] }
